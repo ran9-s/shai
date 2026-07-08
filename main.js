@@ -264,6 +264,14 @@ for (let i = 0; i < NUM_DICE; i++) {
   // 初始旋转，让 2 点面朝上（-X 轴转到 +Y 轴，绕 Z 转 -90°）
   body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), -Math.PI / 2);
   world.addBody(body);
+  // 碰撞音效
+  body.addEventListener("collide", (e) => {
+    const now = performance.now();
+    if (body._lastHit && now - body._lastHit < 60) return;
+    body._lastHit = now;
+    const spd = Math.abs(e.contact.getImpactVelocityAlongNormal());
+    playHitSound(spd, e.body.mass > 0);
+  });
   dices.push({ mesh, body });
 }
 
@@ -321,6 +329,7 @@ const startPositions = [
 ];
 
 canvas.addEventListener("pointerup", () => {
+  playThrowSound();
   if (Date.now() - pressStart >= 1000) return;
   isRolling = true;
   stableFrames.fill(0);
@@ -427,6 +436,73 @@ document.addEventListener('pointerdown', () => {
 
 document.addEventListener('pointerup', clearPressTimer);
 document.addEventListener('pointerleave', clearPressTimer);
+
+// ==================== 音效系统（Web Audio API 合成） ====================
+// ── 方案选择 ──
+//
+const _THROW = playThrow_D;
+const _HIT   = playHit_D;
+
+// ── 全局 AudioContext（首次交互时懒初始化） ──
+let audioCtx = null;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+// ── D: 多子音碰撞 ──
+// 3 个快速衰减的短 click，模拟骰子在手里碰撞后甩出
+function playThrow_D() {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime, sr = ctx.sampleRate;
+    for (let k = 0; k < 3; k++) {
+      const t = now + k * 0.035;
+      const dur = 0.04;
+      const buf = ctx.createBuffer(1, Math.ceil(sr * dur), sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length) ** 6;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filt = ctx.createBiquadFilter();
+      filt.type = "highpass"; filt.frequency.value = 3000;
+      const gn = ctx.createGain();
+      gn.gain.setValueAtTime(0.15 - k * 0.04, t); gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(filt); filt.connect(gn); gn.connect(ctx.destination);
+      src.start(t); src.stop(t + dur);
+    }
+  } catch (_) {}
+}
+
+// ── D: 金属感"叮叮" ──
+// 正弦波 + 稍长延音，碰撞效果（选定的方案）
+function playHit_D(impactSpeed, isDiceDice) {
+  try {
+    if (impactSpeed < 0.5) return;
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const vol = Math.min(impactSpeed / 8, 1) * 0.3;
+    if (vol < 0.05) return;
+    const freq = isDiceDice ? 500 + impactSpeed * 40 : 800 + impactSpeed * 60;
+    const dur = Math.min(0.04 + impactSpeed * 0.006, 0.18);
+    const osc = ctx.createOscillator();
+    osc.type = "sine"; osc.frequency.value = freq;
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(vol, now); gn.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(gn); gn.connect(ctx.destination);
+    osc.start(now); osc.stop(now + dur);
+  } catch (_) {}
+}
+
+// ── 别名 ──
+const playThrowSound = _THROW;
+const playHitSound   = _HIT;
 
 // ==================== 落地检测（帧计数） ====================
 // threejs-dice 方式：连续 N 帧速度低于阈值才算落地
