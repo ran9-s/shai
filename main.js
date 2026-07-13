@@ -229,7 +229,7 @@ function createDiceShape(half) {
 
 const diceSize = 0.8;
 const half = diceSize / 2;
-const NUM_DICE = 5;
+const NUM_DICE = 2;
 const dices = [];
 const diceShape = createDiceShape(half);
 const diceGeom = createRoundedDiceGeometry(diceSize, 0.2, 16);
